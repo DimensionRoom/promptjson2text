@@ -244,11 +244,11 @@ function buildPromptText(data: MiniCalendarSchema): {
     if (joined) segs.push(joined);
   }
 
-  if (data.negatives?.length) segs.push(`--no ${data.negatives.join(", ")}`);
+  if (data.negatives?.length) segs.push(`avoid: ${data.negatives.join(", ")}`);
   if (data.quality_note) segs.push(data.quality_note);
   if (data.mj_params?.ar) segs.push(`--ar ${data.mj_params.ar}`);
 
-  const text = segs.filter(Boolean).join(" \n- ");
+  const text = segs.filter(Boolean).join(", ");
   if (!text) warn.push("ไม่มีข้อมูลเพียงพอในการสร้าง prompt");
 
   return { text, warnings: warn };
