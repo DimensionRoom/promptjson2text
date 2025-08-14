@@ -186,72 +186,99 @@ function stripJsonComments(input: string): string {
 }
 
 // ---------- Utils: Build Single Prompt ----------
-function buildPromptText(data: MiniCalendarSchema): {
-  text: string;
-  warnings: string[];
-} {
-  const segs: string[] = [];
+function buildPromptText(data: Record<string, any>): { text: string; warnings: string[] } {
+  const valueSegs: string[] = [];
   const warn: string[] = [];
+  const mjFlags: string[] = [];
+  let noList: string[] = [];
 
-  const concept = data.concept?.trim();
-  if (concept) segs.push(concept);
-
-  const transf = data.transformation?.trim();
-  if (transf) segs.push(transf);
-
-  const mf = data.mini_figures;
-  if (mf) {
-    const count = mf.count ? `${mf.count} tiny figures` : "";
-    const roles = mf.roles?.length ? `(${mf.roles.join(", ")})` : "";
-    const action = mf.action ? ` ${mf.action}` : "";
-    const block = [count, roles].filter(Boolean).join(" ");
-    if (block || action) segs.push([block, action].join(""));
+  function pushMjFlags(m: any) {
+    if (!m || typeof m !== "object") return;
+    const ar = m.aspect_ratio ?? m.ar;
+    const q = m.quality ?? m.q;
+    const s = m.stylize ?? m.s;
+    const chaos = m.chaos;
+    const seed = m.seed;
+    const v = m.version ?? m.v;
+    if (ar) mjFlags.push(`--ar ${ar}`);
+    if (q !== undefined) mjFlags.push(`--q ${q}`);
+    if (s !== undefined) mjFlags.push(`--s ${s}`);
+    if (chaos !== undefined) mjFlags.push(`--chaos ${chaos}`);
+    if (seed !== undefined) mjFlags.push(`--seed ${seed}`);
+    if (v !== undefined) mjFlags.push(`--v ${v}`);
   }
 
-  const comp = data.composition;
-  if (comp) {
-    const framing = comp.framing ? `${comp.framing}` : "";
-    const scale = comp.scale_hint ? `${comp.scale_hint}` : "";
-    const bg = comp.background ? `${comp.background}` : "";
-    const joined = [framing, scale, bg].filter(Boolean).join(", ");
-    if (joined) segs.push(joined);
+  function walk(val: any) {
+    if (val == null) return;
+    const t = typeof val;
+
+    if (t === "string" || t === "number" || t === "boolean") {
+      const s = String(val).trim();
+      if (s) valueSegs.push(s);
+      return;
+    }
+
+    if (Array.isArray(val)) {
+      const primVals: string[] = [];
+      const complex: any[] = [];
+      for (const item of val) {
+        const it = typeof item;
+        if (item == null) continue;
+        if (it === "string" || it === "number" || it === "boolean") {
+          const s = String(item).trim();
+          if (s) primVals.push(s);
+        } else {
+          complex.push(item);
+        }
+      }
+      if (primVals.length) valueSegs.push(primVals.join(", "));
+      complex.forEach(walk);
+      return;
+    }
+
+    if (t === "object") {
+      if ("mj_params" in val && Object.keys(val).length === 1) {
+        pushMjFlags(val.mj_params);
+        return;
+      }
+      for (const [k, v] of Object.entries(val)) {
+        if (k === "mj_params") {
+          pushMjFlags(v);
+        } else if (k === "negatives") {
+          if (Array.isArray(v)) {
+            noList = noList.concat(v.map(x => String(x)).filter(Boolean));
+          } else if (typeof v === "string") {
+            noList.push(v);
+          }
+        } else {
+          walk(v);
+        }
+      }
+    }
   }
 
-  const light = data.lighting;
-  if (light) {
-    const t = light.type ? `${light.type}` : "";
-    const m = light.mood ? `${light.mood}` : "";
-    const s = light.shadows ? `${light.shadows}` : "";
-    const joined = [t, m, s].filter(Boolean).join(", ");
-    if (joined) segs.push(joined);
+  walk(data);
+
+  const parts: string[] = [];
+  if (valueSegs.length) {
+    const body = valueSegs.join(", ").replace(/\s*,\s*,/g, ", ").replace(/\s{2,}/g, " ").trim();
+    if (body) parts.push(body);
   }
-
-  const style = data.style;
-  if (style) {
-    const kw = style.keywords?.length ? style.keywords.join(", ") : "";
-    const pal = style.color_palette ? style.color_palette : "";
-    const fin = style.finish ? style.finish : "";
-    const joined = [kw, pal, fin].filter(Boolean).join(" | ");
-    if (joined) segs.push(joined);
+  if (noList.length) {
+    const seen = new Set<string>();
+    const uniq = noList.filter(x => {
+      const key = x.trim();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (uniq.length) parts.push(`--no ${uniq.join(", ")}`);
   }
+  if (mjFlags.length) parts.push(mjFlags.join(" "));
 
-  const cam = data.camera;
-  if (cam) {
-    const lens = cam.lens ? cam.lens : "";
-    const depth = cam.depth ? cam.depth : "";
-    const focus = cam.focus ? cam.focus : "";
-    const joined = [lens, depth, focus].filter(Boolean).join(", ");
-    if (joined) segs.push(joined);
-  }
-
-  if (data.negatives?.length) segs.push(`avoid: ${data.negatives.join(", ")}`);
-  if (data.quality_note) segs.push(data.quality_note);
-  if (data.mj_params?.ar) segs.push(`--ar ${data.mj_params.ar}`);
-
-  const text = segs.filter(Boolean).join(", ");
-  if (!text) warn.push("ไม่มีข้อมูลเพียงพอในการสร้าง prompt");
-
-  return { text, warnings: warn };
+  const textOut = parts.join(" ").replace(/\s{2,}/g, " ").trim();
+  if (!textOut) warn.push("ไม่มีข้อมูลเพียงพอในการสร้าง prompt");
+  return { text: textOut, warnings: warn };
 }
 
 export default function Page() {
